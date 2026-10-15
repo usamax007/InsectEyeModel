@@ -1,5 +1,5 @@
 # The Insect Eye Model [1]
-This repository contains code for an insect eye model that projects a **visual scene** into the eye using gnomonic **projection** and then detects motion in the scene using an **event-based motion detection** algorithm.
+This repository contains code for an insect eye model that projects a **visual scene** onto the eye using gnomonic **projection** and subsequently detects motion within the projected scene using an event-based **motion detection** algorithm.
 
 ## Visual Scene Projection
 The model computes a **projection of the visual scene** onto an array of photoreceptors in the hawkmoth *M. sexta*'s compound eye model. The compound eye is modeled as a simple hemispherical eye with a $180^\circ$ field of view along both azimuthal and elevation angles. Each facet connects to one photoreceptor projected by an interommatidial angle of $0.96^\circ$ [2,3]. The visual scene on a plane outside the eye is then projected onto the hemispherical array of photoreceptors using Gnomonic projection defined by the equations below [4].
