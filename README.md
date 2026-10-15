@@ -20,7 +20,7 @@ To **detect flower motion**, we implement an **event-based motion detection** al
 
 The following animation illustrates the model projecting a basic visual scene onto the eye and then detecting motion. 
 <p align="center">
-<img width="800" height="320" alt="video_slides_01-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/dcbb09c2-0413-470a-b02a-c23df7df6a3d" />
+<img width="800" height="320" alt="gif_slides" src="https://github.com/user-attachments/assets/e1a2674e-446e-4e97-880d-bb0f8fd9475f" />
 </p>
 
 # References
