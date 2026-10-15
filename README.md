@@ -1,6 +1,7 @@
 # The Insect Eye Model [1]
 This repository contains code for an insect eye model that projects a **visual scene** into the eye using gnomonic projection and then detects motion in the scene using an event-based motion detection algorithm.
 
+## Visual Scene Projection
 The model computes a **projection of the visual scene** onto an array of photoreceptors in the hawkmoth *M. sexta*'s compound eye model. The compound eye is modeled as a simple hemispherical eye with a $180^\circ$ field of view along both azimuthal and elevation angles. Each facet connects to one photoreceptor projected by an interommatidial angle of $0.96^\circ$ [2,3]. The visual scene on a plane outside the eye is then projected onto the hemispherical array of photoreceptors using Gnomonic projection defined by the equations below [4].
 
 $$\begin{align}
@@ -16,6 +17,7 @@ $\phi_x$ and $\phi_y$ are the angular locations of a photoreceptor along the hor
 
 Because the only moving object in the sample data is the robotic flower, the hawkmoth's field of view is restricted to $-80^\circ < \phi_x < 80^\circ$ and $-35^\circ < \phi_y < 35^\circ$ in order to discard the pixels with no information. The resulting grid is 36 pixels $\times$ 84 pixels, which makes a total of 3024 photoreceptors -- a small subset of $\sim25000$ facets on *M. sexta*'s compound eye [3]. The frames are sampled at 125 FPS, which is approximately the flicker fusion frequency of hawkmoths [5]. The luminosity level $L(p_x,p_y,n)$ of each pixel from the input frames is converted to the grayscale range 0-255, where $0 \leq p_x \leq 83$ and $0 \leq p_y \leq 35$ are the $x$ and $y$ pixel indices, respectively, and $n$ is the frame number.
 
+## Event-based Motion Detection
 To **detect flower motion**, we implement an **event-based motion detection** algorithm [6]. This simplified neuromorphic sensing technique is inspired by elementary motion detection in insect optic lobes [7]. At each pixel, it evaluates the luminosity difference between consecutive frames. If the absolute difference at a pixel $(p_x,p_y)$ between the $n$th and $(n-1)$th frame is greater than a certain threshold, an event $E(p_x,p_y,n)$ is said to be detected. A polarity of either $+1$ or $-1$ is assigned to that pixel depending on whether the luminosity difference was positive or negative, respectively. Otherwise, a value of $0$ is assigned. 
 
 The following animation illustrates the model projecting a basic visual scene onto the eye and then detecting motion. 
