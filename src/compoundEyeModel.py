@@ -1,186 +1,261 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Dec 22 17:52:25 2024
+Created on Sun Dec 22 18:23:34 2024
 
-@author: Usama
+@author: usama
 """
+
+
+"""Compound-eye projection and event-polarity model.
+
+The gnomonic projection uses the complete equations, including user-defined
+projection centers. A fixed image-to-ommatidium map is built once per image
+geometry. Temporal state is updated separately from spatial projection so the
+video can be sampled at either the source FPS or the flicker-fusion frequency.
+"""
+
 import numpy as np
 
-class CompoundEyeModel:
-    
-    threshIntensity = 0.5
-    
-    def __init__(self,species,angle_x,angle_y):
-        # angle_x and angle_y are the total visual field angles in azimuthal and elevation respectively
-        if species == 'Ms' or species == 'ms' or 'MS':
-            print('Model initialized with Manduca sexta parameters')
 
-            # Moth anatomical parameters
-            self.radEye = 0.0041 / 2  # radius of compound eye ball (Theobald et al. 2010)
-            self.d_phi_x = 0.96  # interommatidial angle (deg) (Theobald et al. 2010)
-            self.d_phi_y = 0.96
-            self.fpsVision = 125  # moth's vision frames per second
-        else:
-            raise Exception('unknown species name entered')
-            
-        # Compound eye size 
-        self.n_phi_x = int(angle_x/self.d_phi_x)  # number of x facets (pixels)
-        self.n_phi_y = int(angle_y/self.d_phi_y)  # number of y facets (pixels)
-        
-        self.visionMatrix_0 = [[]]
-        self.visionMatrix_1 = [[]]
-        
-        self.phi_x_0, self.phi_y_0 = 0.0, 0.0
-        # Grid of longitude (phi_x) and latitude (phi_y)
-        self.phi_x_all = self._generateAngularGrid(self.phi_x_0,self.d_phi_x,self.n_phi_x)
-        self.phi_y_all = self._generateAngularGrid(self.phi_y_0,self.d_phi_y,self.n_phi_y)
-        
-        # Grid of cartesian coordinates of gnomonic projection
-        self.X, self.Y, self.Phi_x, self.Phi_y = [], [], [], []
+class CompoundEyeModel:
+    """Project a grayscale scene onto a compound-eye grid."""
+
+    threshIntensity = 0.5  # Threshold in log-intensity difference units
+
+    def __init__(
+        self,
+        species,
+        angle_x,
+        angle_y,
+        phi_x_0=0.0,
+        phi_y_0=0.0,
+        flicker_fusion_fps=125.0,
+    ):
+        # 1. Anatomical parameters (Manduca sexta).
+        if species.lower() != "ms":
+            raise ValueError(f"Unknown species: {species!r}")
+
+        self.radEye = 0.0041 / 2.0  # Eye radius, meters
+        self.d_phi_x = 0.96         # Horizontal interommatidial angle, degrees
+        self.d_phi_y = 0.96         # Vertical interommatidial angle, degrees
+
+        # FFF controls the optional output sampling rate, not spatial geometry.
+        if not np.isfinite(flicker_fusion_fps) or flicker_fusion_fps <= 0:
+            raise ValueError("flicker_fusion_fps must be positive and finite")
+        self.fpsVision = float(flicker_fusion_fps)
+
+        # 2. Angular visual field and user-defined gnomonic centers.
+        self.n_phi_x = int(angle_x / self.d_phi_x)
+        self.n_phi_y = int(angle_y / self.d_phi_y)
+        if self.n_phi_x < 2 or self.n_phi_y < 2:
+            raise ValueError("Both angular fields must contain at least 2 points")
+
+        self.phi_x_0 = float(phi_x_0)
+        self.phi_y_0 = float(phi_y_0)
+
+        # 3. State for detecting events between consecutive *output* samples.
+        self.visionMatrix_0 = None  # Previous temporally sampled visual field
+        self.visionMatrix_1 = None  # Current temporally sampled visual field
+
+        # 4. Mapping is lazily computed on the first input frame.
+        self._map_key = None
         self._generateGnomonicProjection()
-    
-    def _generateAngularGrid(self,angle_0,d_angle,n_angles):
-        array_temp = np.arange(d_angle / 2, d_angle*n_angles / 2, d_angle)
-        return angle_0 + np.concatenate([-np.flip(array_temp),array_temp])
-    
+
+    def _generateAngularGrid(self, angle_0, d_angle, n_angles):
+        """Return n equally spaced angles centered on angle_0 (degrees)."""
+        return angle_0 + (np.arange(n_angles) - (n_angles - 1) / 2.0) * d_angle
+
     def _generateGnomonicProjection(self):
-        # x and y are in the units of compound eye radius
-        for phi_y in self.phi_y_all:
-            row_X, row_Y, row_Phi_x, row_Phi_y = [], [], [], []
-            for phi_x in self.phi_x_all:
-                x,y = self._forwardGnomonicProjection(self.phi_x_0,phi_x,self.phi_y_0,phi_y)
-                row_X.append(x)
-                row_Y.append(y)
-                row_Phi_x.append(phi_x)
-                row_Phi_y.append(phi_y)
-            self.X.append(row_X)
-            self.Y.append(row_Y)
-            self.Phi_x.append(row_Phi_x)
-            self.Phi_y.append(row_Phi_y)
-    
-    def _forwardGnomonicProjection(self,phi_0,phi,lam_0,lam): # give x and y
-        theta = np.abs(np.arccos(np.sin(np.radians(phi)) * np.sin(np.radians(phi_0)) +
-                                  np.cos(np.radians(phi)) * np.cos(np.radians(phi_0)) *
-                                  np.cos(np.radians(lam_0 - lam))))
-        y = self.radEye * np.cos(np.radians(phi_0)) * np.sin(np.radians(lam_0 - lam)) / np.cos(theta)
-        x = -self.radEye * (np.cos(np.radians(phi)) * np.sin(np.radians(phi_0)) -
-                        np.sin(np.radians(phi)) * np.cos(np.radians(phi_0)) *
-                        np.cos(np.radians(lam_0 - lam))) / np.cos(theta)
-        return x, y
-    
-    def giveVisualFieldMatrix(self,frameImage,mpx,mpy): # mpx is meters per pixel in x, mpy is meters per pixel in y
-        n_py = np.size(frameImage,0)
-        n_px = np.size(frameImage,1)
-        cent_px = np.floor((n_px * 0.5))
-        cent_py = np.floor((n_py * 0.5))
-        scene_X, scene_Y = [], []
-        for i_py in range(n_py):
-            row_X, row_Y = [], []
-            for i_px in range(n_px):         
-                x = (i_px - cent_px) * mpx
-                y = -(i_py - cent_py) * mpx
-                row_X.append(x)
-                row_Y.append(y)
-            scene_X.append(row_X)
-            scene_Y.append(row_Y)
-        
-        scene_px = -1*np.ones((n_py,n_px),int)
-        scene_py = -1*np.ones((n_py,n_px),int)
-        matrixVisualField = np.zeros(np.shape(self.X))
-        count_matrixVisualField = np.zeros(np.shape(self.X))
-        j_y_list = list(range(n_py))
-        j_x_list = list(range(n_px))
-        found_block = False
-        for j_y in j_y_list:
-            # print(j_y)
-            for j_x in j_x_list:
-                if not found_block:
-                    i_y = 0
-                    while i_y < len(self.X)-1:
-                        i_x = 0
-                        while i_x < len(self.X[0])-1:
-                            if self._is_point_inside_quadrilateral_ray_casting((scene_X[j_y][j_x],scene_Y[j_y][j_x]), [(self.X[i_y][i_x],self.Y[i_y][i_x]),(self.X[i_y][i_x+1],self.Y[i_y][i_x+1]),(self.X[i_y+1][i_x+1],self.Y[i_y+1][i_x+1]),(self.X[i_y+1][i_x],self.Y[i_y+1][i_x])]):
-                                print((i_y,i_x))
-                                scene_px[j_y,j_x] = i_x
-                                scene_py[j_y,j_x] = i_y
-                                count_matrixVisualField[i_y,i_x] += 1
-                                ind_x, ind_y = i_x, i_y
-                                found_block = True
-                                break
-                            i_x += 1
-                        if found_block:
-                            break
-                        i_y += 1
-                else:
-                    list_i_y = [ind_y, ind_y-1,ind_y+1]
-                    list_i_x = [ind_x, ind_x-1,ind_x+1]
-                    ii_y = 0
-                    found_block_2 = False
-                    while ii_y < 3:
-                        i_y = list_i_y[ii_y]
-                        ii_x = 0
-                        while ii_x < 3:
-                            i_x = list_i_x[ii_x]
-                            if self._is_point_inside_quadrilateral_ray_casting((scene_X[j_y][j_x],scene_Y[j_y][j_x]), [(self.X[i_y][i_x],self.Y[i_y][i_x]),(self.X[i_y][i_x+1],self.Y[i_y][i_x+1]),(self.X[i_y+1][i_x+1],self.Y[i_y+1][i_x+1]),(self.X[i_y+1][i_x],self.Y[i_y+1][i_x])]):
-                                #print((i_y,i_x))
-                                scene_px[j_y,j_x] = i_x
-                                scene_py[j_y,j_x] = i_y
-                                count_matrixVisualField[i_y,i_x] += 1
-                                ind_x, ind_y = i_x, i_y
-                                found_block_2 = True
-                                break
-                            ii_x += 1
-                        if found_block_2:
-                            break
-                        ii_y += 1
-            j_x_list = list(reversed(j_x_list))    
-        for j_py in range(n_py):
-            for j_px in range(n_px):
-                if scene_px[j_py,j_px] > -1 and scene_py[j_py,j_px] > -1: 
-                    matrixVisualField[scene_py[j_py,j_px],scene_px[j_py,j_px]] += frameImage[j_py,j_px]/count_matrixVisualField[scene_py[j_py,j_px],scene_px[j_py,j_px]]
+        """Use the *full* gnomonic equations and arbitrary center angles."""
+        # Angles are converted from degrees to radians for NumPy trigonometry.
+        self.phi_x_all = self._generateAngularGrid(
+            self.phi_x_0, self.d_phi_x, self.n_phi_x
+        )
+        self.phi_y_all = self._generateAngularGrid(
+            self.phi_y_0, self.d_phi_y, self.n_phi_y
+        )
+        self.Phi_x, self.Phi_y = np.meshgrid(self.phi_x_all, self.phi_y_all)
+
+        phi_x = np.deg2rad(self.Phi_x)
+        phi_y = np.deg2rad(self.Phi_y)
+        phi_x_0 = np.deg2rad(self.phi_x_0)
+        phi_y_0 = np.deg2rad(self.phi_y_0)
+
+        # cos(theta): denominator of the complete gnomonic projection.
+        cos_theta = (
+            np.sin(phi_x) * np.sin(phi_x_0)
+            + np.cos(phi_x) * np.cos(phi_x_0) * np.cos(phi_y_0 - phi_y)
+        )
+
+        # Gnomonic projection exists only within 90 degrees of its center.
+        self.visible = cos_theta > 1e-8
+        denominator = np.where(self.visible, cos_theta, np.nan)
+
+        # Full projection equations (same sign and angle conventions as original).
+        self.X = -self.radEye * (
+            np.cos(phi_x) * np.sin(phi_x_0)
+            - np.sin(phi_x) * np.cos(phi_x_0) * np.cos(phi_y_0 - phi_y)
+        ) / denominator
+        self.Y = self.radEye * (
+            np.cos(phi_x_0) * np.sin(phi_y_0 - phi_y)
+        ) / denominator
+
+    def set_projection_center(self, phi_x_0, phi_y_0):
+        """Move the projection center and invalidate geometry/temporal caches."""
+        self.phi_x_0 = float(phi_x_0)
+        self.phi_y_0 = float(phi_y_0)
+        self._generateGnomonicProjection()
+        self._map_key = None
+        self.reset_temporal_state()
+
+    def reset_temporal_state(self):
+        """Clear the event history (e.g., before starting a new video)."""
+        self.visionMatrix_0 = None
+        self.visionMatrix_1 = None
+
+    def choose_output_fps(self, input_fps, fps_mode):
+        """Select input FPS or the model's flicker-fusion FPS."""
+        if not np.isfinite(input_fps) or input_fps <= 0:
+            raise ValueError("Input FPS must be positive and finite")
+        if fps_mode == "input":
+            return float(input_fps)
+        if fps_mode == "flicker_fusion":
+            return self.fpsVision
+        raise ValueError("fps_mode must be 'input' or 'flicker_fusion'")
+
+    def _build_pixel_map(self, image_shape, mpx, mpy):
+        """Cache source-pixel -> facet assignment using polygon ray casting.
+
+        Each facet's integration area is the polygon joining four neighboring
+        projected ommatidial centers. For overlaps, the first cell wins.
+        """
+        h, w = image_shape
+        ny, nx = self.X.shape
+        cx, cy = np.floor(w / 2.0), np.floor(h / 2.0)
+
+        # Project coordinates (meters) to image coordinates (pixels).
+        px = self.X / mpx + cx
+        py = -self.Y / mpy + cy
+
+        # Negative values mark image pixels outside the valid visual field.
+        lookup = np.full((h, w), -1, dtype=np.int32)
+
+        for iy in range(ny - 1):
+            for ix in range(nx - 1):
+                # Corners in the same order as the original quadrilateral code.
+                corners = (
+                    (iy, ix), (iy, ix + 1),
+                    (iy + 1, ix + 1), (iy + 1, ix),
+                )
+                if not all(self.visible[r, c] for r, c in corners):
+                    continue
+
+                vx = np.array([px[r, c] for r, c in corners])
+                vy = np.array([py[r, c] for r, c in corners])
+                if not (np.isfinite(vx).all() and np.isfinite(vy).all()):
+                    continue
+
+                # Limit ray casting to the polygon's image-space bounding box.
+                x0 = max(0, int(np.ceil(vx.min())))
+                x1 = min(w, int(np.floor(vx.max())) + 1)
+                y0 = max(0, int(np.ceil(vy.min())))
+                y1 = min(h, int(np.floor(vy.max())) + 1)
+                if x0 >= x1 or y0 >= y1:
+                    continue
+
+                xx = np.arange(x0, x1, dtype=np.float64)[None, :]
+                yy = np.arange(y0, y1, dtype=np.float64)[:, None]
+                inside = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+
+                # Vectorized version of the original four-edge ray-casting test.
+                for k in range(4):
+                    a = (k + 1) % 4
+                    if vy[k] == vy[a]:
+                        continue
+                    x_intersection = (
+                        (vx[a] - vx[k]) * (yy - vy[k]) / (vy[a] - vy[k])
+                        + vx[k]
+                    )
+                    inside ^= (
+                        ((vy[k] > yy) != (vy[a] > yy))
+                        & (xx < x_intersection)
+                    )
+
+                patch = lookup[y0:y1, x0:x1]
+                patch[inside & (patch == -1)] = iy * nx + ix
+
+        # Cache only the assigned pixels and count contributors per facet.
+        flat = lookup.ravel()
+        self._src_idx = np.flatnonzero(flat >= 0)
+        self._dst_idx = flat[self._src_idx]
+        self._counts = np.bincount(self._dst_idx, minlength=ny * nx)
+        self._map_key = (h, w, float(mpx), float(mpy))
+
+    def project_frame(self, frameImage, mpx, mpy):
+        """Return an unquantized (float32) visual field for one source frame.
+
+        This method intentionally does NOT update temporal event state.
+        Spatial projection is computed once per *source* frame, regardless
+        of how many output frames are generated by temporal interpolation.
+        """
+        if frameImage.ndim != 2:
+            raise ValueError("project_frame requires a 2D grayscale image")
+        if not (np.isfinite(mpx) and np.isfinite(mpy) and mpx > 0 and mpy > 0):
+            raise ValueError("mpx and mpy must be positive and finite")
+
+        h, w = frameImage.shape
+        key = (h, w, float(mpx), float(mpy))
+        if self._map_key != key:
+            self._build_pixel_map((h, w), mpx, mpy)
+
+        ny, nx = self.X.shape
+        sums = np.bincount(
+            self._dst_idx,
+            weights=frameImage.ravel()[self._src_idx],
+            minlength=ny * nx,
+        )
+        mean_intensity = np.divide(
+            sums,
+            self._counts,
+            out=np.zeros_like(sums),
+            where=self._counts > 0,
+        )
+        return mean_intensity.reshape(ny, nx).astype(np.float32)
+
+    def set_visual_field(self, visual_field):
+        """Advance temporal history by exactly one *output* video frame."""
+        vf = np.asarray(visual_field, dtype=np.float32)
+        if vf.shape != self.X.shape:
+            raise ValueError(f"Expected visual field of shape {self.X.shape}")
         self.visionMatrix_0 = self.visionMatrix_1
-        self.visionMatrix_1 = matrixVisualField
-        return(np.array(matrixVisualField).astype(np.uint8))
-        
-    def giveEventPolarityMatrix(self, makeBipolar):
-        # Initialize variables
-        matrixEventPolarity = np.zeros((self.n_phi_y,self.n_phi_x))
-        curIntensity = np.log(np.array(self.visionMatrix_0+1.0, dtype=np.float64))
-        nexIntensity = np.log(np.array(self.visionMatrix_1+1.0, dtype=np.float64))
-    
+        self.visionMatrix_1 = vf
+        return np.clip(vf, 0, 255).astype(np.uint8)
+
+    def giveVisualFieldMatrix(self, frameImage, mpx, mpy):
+        """Backward-compatible spatial projection + one temporal step.
+
+        Use project_frame()/set_visual_field() for FPS conversion so temporal
+        history advances at the *output* frame rate rather than source rate.
+        """
+        vf = self.project_frame(frameImage, mpx, mpy)
+        return self.set_visual_field(vf)
+
+    def giveEventPolarityMatrix(self, makeBipolar=True):
+        """Find log-intensity events between consecutive OUTPUT samples."""
+        if self.visionMatrix_0 is None or self.visionMatrix_1 is None:
+            raise RuntimeError("At least two output samples are required")
+
+        delta = np.log1p(self.visionMatrix_1) - np.log1p(self.visionMatrix_0)
+
         if makeBipolar:
-            magNexIntensity = np.sqrt(nexIntensity ** 2)
-            magCurIntensity = np.sqrt(curIntensity ** 2)
-            difMagIntensity = magNexIntensity - magCurIntensity
-            indsEvent = np.where(np.abs(difMagIntensity) > self.threshIntensity)
-            matrixEventPolarity[indsEvent] = 255 * np.sign(difMagIntensity[indsEvent])
-            matrixEventPolarity = matrixEventPolarity/2 + 128
-            
-        else:
-            temp = nexIntensity - curIntensity
-            logIntensity = np.sqrt(temp ** 2)
-            indsEvent = np.where(logIntensity > self.threshIntensity)
-            matrixEventPolarity[indsEvent] = 255
-        
-        return matrixEventPolarity.astype(np.uint8)
-    
-    def _is_point_inside_quadrilateral_ray_casting(self, point, quadrilateral):
-        """
-        Checks if a point is inside a quadrilateral using the ray casting algorithm.
-    
-        Args:
-            point: A tuple (x, y) representing the point.
-            quadrilateral: A list of four tuples [(x1, y1), (x2, y2), (x3, y3), (x4, y4)] representing the vertices of the quadrilateral in order.
-    
-        Returns:
-            True if the point is inside the quadrilateral, False otherwise.
-        """
-        x, y = point
-        intersections = 0
-        for i in range(4):
-            x1, y1 = quadrilateral[i]
-            x2, y2 = quadrilateral[(i + 1) % 4]
-            if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
-                intersections += 1
-        return intersections % 2 != 0
+            # 0 = negative event, 128 = no event, 255 = positive event.
+            return np.where(
+                delta > self.threshIntensity, 255,
+                np.where(delta < -self.threshIntensity, 0, 128),
+            ).astype(np.uint8)
+
+        # Unipolar: any sufficiently large magnitude of change becomes 255.
+        return (np.abs(delta) > self.threshIntensity).astype(np.uint8) * 255
+
+
     
