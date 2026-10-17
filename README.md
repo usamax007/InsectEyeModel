@@ -46,7 +46,7 @@ The model currently supports anatomical and visual parameters of *Manduca sexta*
 ## Repository Structure
 
 ```text
-compound-eye-model/
+insect-eye-model/
 │
 ├── src/
 │   ├── main.py
